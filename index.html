@@ -413,6 +413,10 @@
         let dragStart = null; // {nx, ny}
         let dragOrigBox = null; // copy of box before drag
 
+        // Pan state (middle mouse button)
+        let isPanning = false;
+        let panStart = null; // {x, y} canvas pixels
+
         // Undo/redo
         let history = [];
         let redoStack = [];
@@ -876,6 +880,18 @@
           if (!img || modalOverlay.classList.contains("active")) return;
           const pos = getCanvasMousePos(e);
 
+          // Middle mouse button: start panning
+          if (e.button === 1) {
+            e.preventDefault();
+            isPanning = true;
+            panStart = pos;
+            canvas.style.cursor = "grabbing";
+            return;
+          }
+
+          // Only handle left mouse button for drawing/editing
+          if (e.button !== 0) return;
+
           // Check for handle drag on selected box
           const handle = hitTestHandle(pos.x, pos.y);
           if (handle) {
@@ -905,6 +921,15 @@
         canvas.addEventListener("mousemove", (e) => {
           if (!img) return;
           const pos = getCanvasMousePos(e);
+
+          // Handle panning
+          if (isPanning && panStart) {
+            offsetX += pos.x - panStart.x;
+            offsetY += pos.y - panStart.y;
+            panStart = pos;
+            render();
+            return;
+          }
 
           // Track hover position for crosshair
           hoverPos = pos;
@@ -974,6 +999,13 @@
         });
 
         canvas.addEventListener("mouseup", (e) => {
+          if (e.button === 1 && isPanning) {
+            isPanning = false;
+            panStart = null;
+            canvas.style.cursor = img ? "crosshair" : "default";
+            return;
+          }
+
           if (dragMode) {
             dragMode = null;
             dragStart = null;
@@ -1025,8 +1057,52 @@
 
         canvas.addEventListener("mouseleave", () => {
           hoverPos = null;
+          if (isPanning) {
+            isPanning = false;
+            panStart = null;
+          }
           if (img) render();
         });
+
+        // Prevent default middle-click auto-scroll
+        canvas.addEventListener("auxclick", (e) => {
+          if (e.button === 1) e.preventDefault();
+        });
+
+        // ---- Scroll Wheel Zoom ----
+        canvas.addEventListener(
+          "wheel",
+          (e) => {
+            if (!img) return;
+            e.preventDefault();
+
+            const pos = getCanvasMousePos(e);
+
+            // Remember the image-space point under the cursor before zoom
+            const before = c2n(pos.x, pos.y);
+
+            // Smooth zoom: scale proportional to scroll amount
+            const zoomAmount = -e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.002);
+            const zoomFactor = Math.pow(2, zoomAmount);
+            const newScale = scale * zoomFactor;
+
+            // Clamp scale
+            const wrapRect = canvasWrap.getBoundingClientRect();
+            const fitScale = Math.min(
+              wrapRect.width / img.naturalWidth,
+              wrapRect.height / img.naturalHeight,
+              1,
+            );
+            scale = Math.max(fitScale * 0.5, Math.min(50, newScale));
+
+            // Adjust offset so the point under cursor stays fixed
+            offsetX = pos.x - before.x * img.naturalWidth * scale;
+            offsetY = pos.y - before.y * img.naturalHeight * scale;
+
+            render();
+          },
+          { passive: false },
+        );
 
         // ---- Keyboard ----
         document.addEventListener("keydown", (e) => {
@@ -1080,6 +1156,14 @@
           if (e.key === "l" || e.key === "L") {
             e.preventDefault();
             toggleLabels();
+            return;
+          }
+
+          // Reset zoom to fit (0)
+          if (e.key === "0" && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            fitCanvas();
+            render();
             return;
           }
 
